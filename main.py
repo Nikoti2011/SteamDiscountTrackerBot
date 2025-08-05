@@ -1,25 +1,15 @@
 import requests
-from bs4 import BeautifulSoup
 import os
 
-STEAM_URL = "https://store.steampowered.com/app/413150/Stardew_Valley/"
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+webhook = os.environ.get("DISCORD_WEBHOOK")
 
-def check_discount():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(STEAM_URL, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
+data = {
+    "content": "✅ This is a test from the GitHub Actions bot! It works!"
+}
 
-    discount_tag = soup.find("div", class_="discount_pct")
-    if discount_tag:
-        discount = discount_tag.text.strip()
-        price = soup.find("div", class_="discount_final_price").text.strip()
-        print(f"Discount found: {discount}, now {price}")
+response = requests.post(webhook, json=data)
 
-        if DISCORD_WEBHOOK:
-            requests.post(DISCORD_WEBHOOK, json={"content": f"🎉 Stardew Valley is on sale! {discount}, now {price}\n{STEAM_URL}"})
-    else:
-        print("No discount.")
-
-if __name__ == "__main__":
-    check_discount()
+if response.status_code == 204:
+    print("Message sent to Discord!")
+else:
+    print("Failed to send message:", response.status_code, response.text)
