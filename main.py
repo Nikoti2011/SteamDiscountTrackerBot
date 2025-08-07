@@ -1,64 +1,43 @@
-import requests
+bu tkkep the same message system of this version import requests
 from bs4 import BeautifulSoup
 import os
 
-# === Add your links here ===
-steam_links = [
-    "https://store.steampowered.com/app/413150/Stardew_Valley/",
-    "https://store.steampowered.com/app/1030300/Hollow_Knight_Silksong/",
-    "https://store.steampowered.com/app/739630/Phasmophobia/",
-    "https://store.steampowered.com/app/1091500/Cyberpunk_2077/"
-]
-
-# === Discord Webhook from GitHub Secret ===
+# Load Discord webhook URL from secret
 webhook = os.environ.get("DISCORD_WEBHOOK")
 
-# === Prepare message parts ===
-on_sale = []
-not_on_sale = []
+# Steam URL for Stardew Valley
+steam_url = "https://store.steampowered.com/app/413150/Stardew_Valley/"
 
+# Get the page content
 headers = {"User-Agent": "Mozilla/5.0"}
+response = requests.get(steam_url, headers=headers)
+soup = BeautifulSoup(response.text, "html.parser")
 
-for link in steam_links:
-    try:
-        response = requests.get(link, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
+# Try to find a discount block
+discount_block = soup.find("div", class_="discount_pct")
 
-        title_tag = soup.find("div", class_="apphub_AppName")
-        name = title_tag.text.strip() if title_tag else "Unknown Game"
+if discount_block:
+    discount_percent = discount_block.get_text(strip=True)
+    original_price = soup.find("div", class_="discount_original_price").get_text(strip=True)
+    final_price = soup.find("div", class_="discount_final_price").get_text(strip=True)
 
-        discount = soup.find("div", class_="discount_pct")
-        if discount:
-            discount_percent = discount.get_text(strip=True)
-            original_price = soup.find("div", class_="discount_original_price").get_text(strip=True)
-            final_price = soup.find("div", class_="discount_final_price").get_text(strip=True)
-
-            on_sale.append(
-                f"**{name}** is on sale!\n"
-                f"{discount_percent} off\n"
-                f"~~{original_price}~~ → **{final_price}**\n🔗 {link}"
-            )
-        else:
-            not_on_sale.append(f"{name} is not on sale\n🔗 {link}")
-
-    except Exception as e:
-        not_on_sale.append(f"Error checking game at {link}:\n{e}")
-
-# === Combine into one message ===
-if on_sale:
-    message = "@everyone 🔥 Some games are currently on sale!\n\n"
-    message += "\n\n".join(on_sale)
+    message = (
+        f"@everyone 🔥 **Stardew Valley is on sale!**\n\n"
+        f"**{discount_percent}** off\n"
+        f"~~{original_price}~~ → **{final_price}**\n\n"
+        f"🔗 {steam_url}"
+    )
 else:
-    message = "🔍 None of your tracked games are on sale.\n"
+    message = (
+        "🔎 **Stardew Valley is not on sale right now.**\n"
+        f"Check it here: {steam_url}"
+    )
 
-if not_on_sale:
-    message += "\n\n❌ Not on sale:\n" + "\n".join(not_on_sale)
-
-# === Send to Discord ===
+# Send to Discord
 payload = {"content": message}
 res = requests.post(webhook, json=payload)
 
-# === Debug ===
+# Debugging
 if res.status_code == 204:
     print("✅ Message sent to Discord.")
 else:
