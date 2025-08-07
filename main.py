@@ -1,4 +1,4 @@
-bu tkkep the same message system of this version import requests
+import requests
 from bs4 import BeautifulSoup
 import os
 
