@@ -2,43 +2,60 @@ import requests
 from bs4 import BeautifulSoup
 import os
 
-# Load Discord webhook URL from secret
+# Discord webhook desde variable de entorno
 webhook = os.environ.get("DISCORD_WEBHOOK")
 
-# Steam URL for Stardew Valley
-steam_url = "https://store.steampowered.com/app/413150/Stardew_Valley/"
+# Lista de juegos/bundles que quieres trackear
+games = {
+    "Cyberpunk 2077 Ultimate Edition": "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
+}
 
-# Get the page content
 headers = {"User-Agent": "Mozilla/5.0"}
-response = requests.get(steam_url, headers=headers)
-soup = BeautifulSoup(response.text, "html.parser")
+messages = []
+any_sale = False  # Para decidir si usamos @everyone
 
-# Try to find a discount block
-discount_block = soup.find("div", class_="discount_pct")
+for name, url in games.items():
+    try:
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, "html.parser")
 
-if discount_block:
-    discount_percent = discount_block.get_text(strip=True)
-    original_price = soup.find("div", class_="discount_original_price").get_text(strip=True)
-    final_price = soup.find("div", class_="discount_final_price").get_text(strip=True)
+        discount_block = soup.find("div", class_="discount_pct")
 
-    message = (
-        f"@everyone 🔥 **Stardew Valley is on sale!**\n\n"
-        f"**{discount_percent}** off\n"
-        f"~~{original_price}~~ → **{final_price}**\n\n"
-        f"🔗 {steam_url}"
-    )
+        if discount_block:  # Si hay descuento
+            discount_percent = discount_block.get_text(strip=True)
+            original_price = soup.find("div", class_="discount_original_price").get_text(strip=True)
+            final_price = soup.find("div", class_="discount_final_price").get_text(strip=True)
+
+            messages.append(
+                f"🎮 **{name}** está en oferta!\n"
+                f"**{discount_percent}** off\n"
+                f"~~{original_price}~~ → **{final_price}**\n"
+                f"🔗 {url}\n"
+            )
+            any_sale = True
+        else:
+            messages.append(
+                f"🔎 **{name}** no está en oferta.\n"
+                f"🔗 {url}\n"
+            )
+    except Exception as e:
+        messages.append(f"⚠️ Error revisando {name}: {e}")
+
+# Unir todos los mensajes en uno solo
+final_message = "\n".join(messages)
+
+# Agregar @everyone solo si al menos un juego tiene descuento
+if any_sale:
+    final_message = "@everyone 🔥 Ofertas detectadas:\n\n" + final_message
 else:
-    message = (
-        "🔎 **Stardew Valley is not on sale right now.**\n"
-        f"Check it here: {steam_url}"
-    )
+    final_message = "📢 Estado de juegos en Steam:\n\n" + final_message
 
-# Send to Discord
-payload = {"content": message}
+# Enviar a Discord
+payload = {"content": final_message}
 res = requests.post(webhook, json=payload)
 
-# Debugging
+# Debug
 if res.status_code == 204:
-    print("✅ Message sent to Discord.")
+    print("✅ Mensaje enviado a Discord.")
 else:
-    print(f"❌ Failed to send message: {res.status_code} {res.text}")
+    print(f"❌ Error al enviar: {res.status_code} {res.text}")
