@@ -1,61 +1,63 @@
+import os
 import requests
 from bs4 import BeautifulSoup
-import os
+import discord
+from discord.ext import tasks
 
-# Discord webhook desde variable de entorno
-webhook = os.environ.get("DISCORD_WEBHOOK")
+TOKEN = os.getenv("DISCORD_TOKEN")
+CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 
-# Lista de juegos/bundles que quieres trackear
-games = {
-    "Cyberpunk 2077 Ultimate Edition": "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
-}
+# Add your Steam links here (games or bundles)
+steam_links = [
+   "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
+]
 
-headers = {"User-Agent": "Mozilla/5.0"}
-messages = []
-any_sale = False  # Para decidir si usamos @everyone
+intents = discord.Intents.default()
+client = discord.Client(intents=intents)
 
-for name, url in games.items():
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
+def check_discount(url):
+    """Check if a game or bundle has a discount."""
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, "html.parser")
 
-        discount_block = soup.find("div", class_="discount_pct")
+    discount = soup.select_one(".discount_pct")
+    final_price = soup.select_one(".discount_final_price")
+    original_price = soup.select_one(".discount_original_price")
+    title_tag = soup.select_one(".apphub_AppName") or soup.select_one(".pageheader")
 
-        if discount_block:  # Si hay descuento
-            discount_percent = discount_block.get_text(strip=True)
-            original_price = soup.find("div", class_="discount_original_price").get_text(strip=True)
-            final_price = soup.find("div", class_="discount_final_price").get_text(strip=True)
+    if title_tag:
+        title = title_tag.get_text(strip=True)
+    else:
+        title = "Unknown Title"
 
-            messages.append(
-                f"🎮 **{name}** está en oferta!\n"
-                f"**{discount_percent}** off\n"
-                f"~~{original_price}~~ → **{final_price}**\n"
-                f"🔗 {url}\n"
-            )
-            any_sale = True
-        else:
-            messages.append(
-                f"🔎 **{name}** no está en oferta.\n"
-                f"🔗 {url}\n"
-            )
-    except Exception as e:
-        messages.append(f"⚠️ Error revisando {name}: {e}")
+    if discount and final_price:
+        return {
+            "title": title,
+            "discount": discount.get_text(strip=True),
+            "final_price": final_price.get_text(strip=True),
+            "original_price": original_price.get_text(strip=True) if original_price else None,
+            "url": url
+        }
+    return None
 
-# Unir todos los mensajes en uno solo
-final_message = "\n".join(messages)
+@tasks.loop(minutes=5)
+async def check_sales():
+    channel = client.get_channel(CHANNEL_ID)
+    results = []
 
-# Agregar @everyone solo si al menos un juego tiene descuento
-if any_sale:
-    final_message = "@everyone 🔥 Ofertas detectadas:\n\n" + final_message
-else:
-    final_message = "📢 Estado de juegos en Steam:\n\n" + final_message
+    for link in steam_links:
+        deal = check_discount(link)
+        if deal:
+            results.append(f"**{deal['title']}** is {deal['discount']} off!\n"
+                           f"Now: {deal['final_price']} (was {deal['original_price']})\n{deal['url']}")
 
-# Enviar a Discord
-payload = {"content": final_message}
-res = requests.post(webhook, json=payload)
+    if results:
+        message = "@everyone 🎉 Steam Sale Alert! 🎉\n\n" + "\n\n".join(results)
+        await channel.send(message)
 
-# Debug
-if res.status_code == 204:
-    print("✅ Mensaje enviado a Discord.")
-else:
-    print(f"❌ Error al enviar: {res.status_code} {res.text}")
+@client.event
+async def on_ready():
+    print(f"We have logged in as {client.user}")
+    check_sales.start()
+
+client.run(TOKEN)
