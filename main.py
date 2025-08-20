@@ -1,63 +1,87 @@
 import os
 import requests
-from bs4 import BeautifulSoup
-import discord
-from discord.ext import tasks
+from steam.steamid import SteamID
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
-
-# Add your Steam links here (games or bundles)
-steam_links = [
+# Webhook URL (set this in your repository secrets as DISCORD_WEBHOOK)
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
+GAMES = [
    "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
 ]
 
-intents = discord.Intents.default()
-client = discord.Client(intents=intents)
+def get_steam_id(url):
+    """
+    Extracts the appid or bundleid from a Steam URL.
+    """
+    if "/app/" in url:
+        return "app", url.split("/app/")[1].split("/")[0]
+    elif "/bundle/" in url:
+        return "bundle", url.split("/bundle/")[1].split("/")[0]
+    return None, None
 
-def check_discount(url):
-    """Check if a game or bundle has a discount."""
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    discount = soup.select_one(".discount_pct")
-    final_price = soup.select_one(".discount_final_price")
-    original_price = soup.select_one(".discount_original_price")
-    title_tag = soup.select_one(".apphub_AppName") or soup.select_one(".pageheader")
-
-    if title_tag:
-        title = title_tag.get_text(strip=True)
+def fetch_discount(steam_type, steam_id):
+    """
+    Fetch discount information for an app or bundle.
+    """
+    if steam_type == "app":
+        api_url = f"https://store.steampowered.com/api/appdetails?appids={steam_id}&cc=us&l=en"
+    elif steam_type == "bundle":
+        api_url = f"https://store.steampowered.com/api/bundledetails/?bundleids={steam_id}&cc=us&l=en"
     else:
-        title = "Unknown Title"
+        return None
 
-    if discount and final_price:
-        return {
-            "title": title,
-            "discount": discount.get_text(strip=True),
-            "final_price": final_price.get_text(strip=True),
-            "original_price": original_price.get_text(strip=True) if original_price else None,
-            "url": url
-        }
-    return None
+    response = requests.get(api_url)
+    data = response.json()
 
-@tasks.loop(minutes=5)
-async def check_sales():
-    channel = client.get_channel(CHANNEL_ID)
-    results = []
+    if not data or not data.get(steam_id):
+        return None
 
-    for link in steam_links:
-        deal = check_discount(link)
-        if deal:
-            results.append(f"**{deal['title']}** is {deal['discount']} off!\n"
-                           f"Now: {deal['final_price']} (was {deal['original_price']})\n{deal['url']}")
+    details = data[steam_id].get("data")
+    if not details:
+        return None
 
-    if results:
-        message = "@everyone 🎉 Steam Sale Alert! 🎉\n\n" + "\n\n".join(results)
-        await channel.send(message)
+    if steam_type == "app":
+        price_info = details.get("price_overview")
+    else:
+        price_info = details.get("price", {}).get("discounted")
 
-@client.event
-async def on_ready():
-    print(f"We have logged in as {client.user}")
-    check_sales.start()
+    if not price_info:
+        return None
 
-client.run(TOKEN)
+    discount = price_info.get("discount_percent", 0)
+    final_price = price_info.get("final_formatted", "Unknown price")
+    name = details.get("name", "Unknown title")
+
+    return {
+        "name": name,
+        "discount": discount,
+        "price": final_price,
+        "url": f"https://store.steampowered.com/{steam_type}/{steam_id}"
+    }
+
+def send_to_discord(message):
+    """
+    Send a message to Discord via webhook.
+    """
+    payload = {"content": message}
+    requests.post(WEBHOOK_URL, json=payload)
+
+def main():
+    discounted_games = []
+    for game_url in GAMES:
+        steam_type, steam_id = get_steam_id(game_url)
+        if not steam_type:
+            continue
+
+        discount_info = fetch_discount(steam_type, steam_id)
+        if discount_info and discount_info["discount"] > 0:
+            discounted_games.append(
+                f"**{discount_info['name']}** is {discount_info['discount']}% off for {discount_info['price']}!\n{discount_info['url']}"
+            )
+
+    if discounted_games:
+        send_to_discord("@everyone 🎮 **Steam Discounts!**\n\n" + "\n\n".join(discounted_games))
+    else:
+        send_to_discord("No discounts found today.")
+
+if __name__ == "__main__":
+    main()
