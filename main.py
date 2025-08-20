@@ -1,6 +1,5 @@
 import os
 import requests
-from steam.steamid import SteamID
 
 # Webhook URL (set this in your repository secrets as DISCORD_WEBHOOK)
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
@@ -39,22 +38,31 @@ def fetch_discount(steam_type, steam_id):
     if not details:
         return None
 
+    # Handle app vs bundle price info
     if steam_type == "app":
         price_info = details.get("price_overview")
     else:
         price_info = details.get("price", {}).get("discounted")
 
     if not price_info:
-        return None
+        return {
+            "name": details.get("name", "Unknown title"),
+            "discount": 0,
+            "original": None,
+            "final": None,
+            "url": f"https://store.steampowered.com/{steam_type}/{steam_id}"
+        }
 
     discount = price_info.get("discount_percent", 0)
     final_price = price_info.get("final_formatted", "Unknown price")
+    original_price = price_info.get("initial_formatted", None)
     name = details.get("name", "Unknown title")
 
     return {
         "name": name,
         "discount": discount,
-        "price": final_price,
+        "original": original_price,
+        "final": final_price,
         "url": f"https://store.steampowered.com/{steam_type}/{steam_id}"
     }
 
@@ -66,22 +74,26 @@ def send_to_discord(message):
     requests.post(WEBHOOK_URL, json=payload)
 
 def main():
-    discounted_games = []
     for game_url in GAMES:
         steam_type, steam_id = get_steam_id(game_url)
         if not steam_type:
             continue
 
         discount_info = fetch_discount(steam_type, steam_id)
-        if discount_info and discount_info["discount"] > 0:
-            discounted_games.append(
-                f"**{discount_info['name']}** is {discount_info['discount']}% off for {discount_info['price']}!\n{discount_info['url']}"
+        if discount_info["discount"] > 0:
+            message = (
+                f"@everyone 🔥 **{discount_info['name']} is on sale!**\n\n"
+                f"**{discount_info['discount']}%** off\n"
+                f"~~{discount_info['original']}~~ → **{discount_info['final']}**\n\n"
+                f"🔗 {discount_info['url']}"
+            )
+        else:
+            message = (
+                f"🔎 **{discount_info['name']} is not on sale right now.**\n"
+                f"Check it here: {discount_info['url']}"
             )
 
-    if discounted_games:
-        send_to_discord("@everyone 🎮 **Steam Discounts!**\n\n" + "\n\n".join(discounted_games))
-    else:
-        send_to_discord("No discounts found today.")
+        send_to_discord(message)
 
 if __name__ == "__main__":
     main()
