@@ -1,99 +1,86 @@
 import os
 import requests
 
-# Webhook URL (set this in your repository secrets as DISCORD_WEBHOOK)
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
-GAMES = [
-   "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
+# List of Steam store links (games or bundles)
+steam_links = [
+    "https://store.steampowered.com/bundle/32470/Cyberpunk_2077_Ultimate_Edition/"
 ]
 
-def get_steam_id(url):
+# Your Discord webhook (read from GitHub secret or env variable)
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
+
+def check_discount(url):
     """
-    Extracts the appid or bundleid from a Steam URL.
+    Returns (on_sale: bool, name: str, discount: str, old_price: str, new_price: str)
     """
-    if "/app/" in url:
-        return "app", url.split("/app/")[1].split("/")[0]
-    elif "/bundle/" in url:
-        return "bundle", url.split("/bundle/")[1].split("/")[0]
-    return None, None
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return False, None, None, None, None
 
-def fetch_discount(steam_type, steam_id):
-    """
-    Fetch discount information for an app or bundle.
-    """
-    if steam_type == "app":
-        api_url = f"https://store.steampowered.com/api/appdetails?appids={steam_id}&cc=us&l=en"
-    elif steam_type == "bundle":
-        api_url = f"https://store.steampowered.com/api/bundledetails/?bundleids={steam_id}&cc=us&l=en"
-    else:
-        return None
+        html = r.text
 
-    response = requests.get(api_url)
-    data = response.json()
+        # Extract game/bundle name
+        start = html.find('<title>') + 7
+        end = html.find('</title>')
+        name = html[start:end].split("on Steam")[0].strip()
 
-    if not data or not data.get(steam_id):
-        return None
+        # Check for discount
+        if 'discount_pct' in html:
+            # Extract discount
+            discount_start = html.find('discount_pct">') + len('discount_pct">')
+            discount_end = html.find('%', discount_start)
+            discount = html[discount_start:discount_end + 1].strip()
 
-    details = data[steam_id].get("data")
-    if not details:
-        return None
+            # Extract prices
+            old_price_start = html.find('discount_original_price">') + len('discount_original_price">')
+            old_price_end = html.find('</div>', old_price_start)
+            old_price = html[old_price_start:old_price_end].strip()
 
-    # Handle app vs bundle price info
-    if steam_type == "app":
-        price_info = details.get("price_overview")
-    else:
-        price_info = details.get("price", {}).get("discounted")
+            new_price_start = html.find('discount_final_price">') + len('discount_final_price">')
+            new_price_end = html.find('</div>', new_price_start)
+            new_price = html[new_price_start:new_price_end].strip()
 
-    if not price_info:
-        return {
-            "name": details.get("name", "Unknown title"),
-            "discount": 0,
-            "original": None,
-            "final": None,
-            "url": f"https://store.steampowered.com/{steam_type}/{steam_id}"
-        }
+            return True, name, discount, old_price, new_price
 
-    discount = price_info.get("discount_percent", 0)
-    final_price = price_info.get("final_formatted", "Unknown price")
-    original_price = price_info.get("initial_formatted", None)
-    name = details.get("name", "Unknown title")
+        return False, name, None, None, None
 
-    return {
-        "name": name,
-        "discount": discount,
-        "original": original_price,
-        "final": final_price,
-        "url": f"https://store.steampowered.com/{steam_type}/{steam_id}"
-    }
+    except Exception:
+        return False, None, None, None, None
 
-def send_to_discord(message):
-    """
-    Send a message to Discord via webhook.
-    """
-    payload = {"content": message}
+
+def send_webhook(content):
+    payload = {"content": content}
     requests.post(WEBHOOK_URL, json=payload)
 
-def main():
-    for game_url in GAMES:
-        steam_type, steam_id = get_steam_id(game_url)
-        if not steam_type:
-            continue
 
-        discount_info = fetch_discount(steam_type, steam_id)
-        if discount_info["discount"] > 0:
-            message = (
-                f"@everyone 🔥 **{discount_info['name']} is on sale!**\n\n"
-                f"**{discount_info['discount']}%** off\n"
-                f"~~{discount_info['original']}~~ → **{discount_info['final']}**\n\n"
-                f"🔗 {discount_info['url']}"
+def main():
+    any_discount = False
+    messages = []
+
+    for link in steam_links:
+        on_sale, name, discount, old_price, new_price = check_discount(link)
+        if on_sale:
+            any_discount = True
+            messages.append(
+                f"🔥 **{name}** is on sale!\n\n"
+                f"{discount} off\n"
+                f"{old_price} → {new_price}\n\n"
+                f"🔗 {link}"
             )
         else:
-            message = (
-                f"🔎 **{discount_info['name']} is not on sale right now.**\n"
-                f"Check it here: {discount_info['url']}"
+            messages.append(
+                f"🔎 **{name}** is not on sale right now.\n"
+                f"Check it here: {link}"
             )
 
-        send_to_discord(message)
+    if any_discount:
+        message = "@everyone\n\n" + "\n\n".join(messages)
+    else:
+        message = "\n\n".join(messages)
+
+    send_webhook(message)
+
 
 if __name__ == "__main__":
     main()
